@@ -1,0 +1,656 @@
+openapi: 3.0.3
+info:
+  title: AI Personality Quiz API
+  description: |
+    REST API for the AI-Driven Interactive Personality Quiz application.
+    
+    Features:
+    - Create and manage quiz sessions
+    - Submit user responses and get AI-generated story progression
+    - Retrieve personality results
+    - Save and share results (P2)
+    
+    Constitution Compliance:
+    - All endpoints designed for test-first development (contract tests)
+    - Clear request/response schemas for validation
+    - Error handling documented
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local development
+  - url: https://api.personality-quiz.example.com/api/v1
+    description: Production
+
+tags:
+  - name: Quiz
+    description: Quiz session management and progression
+  - name: Results
+    description: Quiz results and character assignments
+  - name: Admin
+    description: Character and trait management (P2)
+
+paths:
+  /quiz/start:
+    post:
+      summary: Start a new quiz session
+      description: |
+        Creates a new quiz session with a unique session ID and returns the
+        initial story prompt (hardcoded for MVP).
+      tags:
+        - Quiz
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                themeId:
+                  type: string
+                  default: fantasy
+                  description: Theme identifier (MVP: only 'fantasy')
+                rounds:
+                  type: integer
+                  default: 6
+                  minimum: 3
+                  maximum: 12
+                  description: Number of quiz rounds (configurable)
+      responses:
+        '201':
+          description: Quiz session created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - sessionId
+                  - currentRound
+                  - totalRounds
+                  - prompt
+                properties:
+                  sessionId:
+                    type: string
+                    format: uuid
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+                  currentRound:
+                    type: integer
+                    example: 1
+                  totalRounds:
+                    type: integer
+                    example: 6
+                  prompt:
+                    type: object
+                    required:
+                      - text
+                      - backgroundImageUrl
+                    properties:
+                      text:
+                        type: string
+                        example: "You awaken in a mystical realm filled with ancient magic..."
+                      backgroundImageUrl:
+                        type: string
+                        format: uri
+                        example: "https://cdn.example.com/images/fantasy-intro.png"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limit exceeded (too many quiz attempts)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /quiz/{sessionId}/respond:
+    post:
+      summary: Submit user response and get next prompt
+      description: |
+        Accepts a user's free-form text response, analyzes it for personality
+        traits using AI, and generates the next story phase with background image.
+        
+        Processing flow:
+        1. Validate response (1-500 chars)
+        2. Extract trait scores using GPT-4
+        3. Generate next story prompt based on response
+        4. Generate background image for story
+        5. Update session state
+        6. Return next prompt or completion status
+      tags:
+        - Quiz
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Session ID from /quiz/start
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - response
+              properties:
+                response:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  example: "I would carefully explore the ancient ruins, looking for clues about this realm's history."
+      responses:
+        '200':
+          description: Response processed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - sessionId
+                  - currentRound
+                  - totalRounds
+                  - isComplete
+                properties:
+                  sessionId:
+                    type: string
+                    format: uuid
+                  currentRound:
+                    type: integer
+                    example: 2
+                  totalRounds:
+                    type: integer
+                    example: 6
+                  isComplete:
+                    type: boolean
+                    example: false
+                    description: True if this was the final round
+                  prompt:
+                    type: object
+                    nullable: true
+                    description: Next prompt (null if isComplete=true)
+                    properties:
+                      text:
+                        type: string
+                        example: "As you examine the ruins, you discover a hidden chamber..."
+                      backgroundImageUrl:
+                        type: string
+                        format: uri
+                        example: "https://cdn.example.com/images/session-abc-round-2.png"
+                  extractedTraits:
+                    type: object
+                    description: Trait scores extracted from this response (for debugging)
+                    properties:
+                      F:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                        example: 75
+                      I:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                        example: 60
+                      S:
+                        type: integer
+                        example: 80
+                      G:
+                        type: integer
+                        example: 65
+                      E:
+                        type: integer
+                        example: 70
+                      N:
+                        type: integer
+                        example: 55
+                      A:
+                        type: integer
+                        example: 85
+                      D:
+                        type: integer
+                        example: 90
+        '400':
+          description: Invalid response (empty, too long, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Session not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error (AI service failure, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: AI service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /quiz/{sessionId}/results:
+    get:
+      summary: Get quiz results
+      description: |
+        Retrieves the final personality assessment results including assigned
+        character type, trait scores, and personality description.
+        
+        Only available after session is completed (all rounds answered).
+      tags:
+        - Results
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Results retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuizResult'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Quiz not yet completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Quiz incomplete"
+                message: "Cannot retrieve results. Please complete all rounds first."
+                code: "QUIZ_INCOMPLETE"
+
+  /quiz/{sessionId}/status:
+    get:
+      summary: Get current quiz status
+      description: |
+        Retrieves the current state of a quiz session including progress,
+        accumulated traits, and session metadata. Useful for resuming after
+        page refresh.
+      tags:
+        - Quiz
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session status retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - sessionId
+                  - status
+                  - currentRound
+                  - totalRounds
+                properties:
+                  sessionId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [active, completed, abandoned]
+                  currentRound:
+                    type: integer
+                    example: 3
+                  totalRounds:
+                    type: integer
+                    example: 6
+                  themeId:
+                    type: string
+                    example: "fantasy"
+                  startedAt:
+                    type: string
+                    format: date-time
+                  lastActivityAt:
+                    type: string
+                    format: date-time
+                  completedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Priority 2: Save and Share Features
+
+  /results/save:
+    post:
+      summary: Save quiz results for later viewing (P2)
+      description: |
+        Creates a permanent saved result with a unique shareable link.
+        Returns a short slug that can be used to access results later.
+      tags:
+        - Results
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sessionId
+              properties:
+                sessionId:
+                  type: string
+                  format: uuid
+                email:
+                  type: string
+                  format: email
+                  description: Optional email to receive result link
+      responses:
+        '201':
+          description: Results saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - resultId
+                  - slug
+                  - shareUrl
+                properties:
+                  resultId:
+                    type: string
+                    format: uuid
+                  slug:
+                    type: string
+                    example: "abc123xyz"
+                    description: Short code for sharing
+                  shareUrl:
+                    type: string
+                    format: uri
+                    example: "https://personality-quiz.example.com/results/abc123xyz"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /results/{slug}:
+    get:
+      summary: View saved results by slug (P2)
+      description: |
+        Retrieves saved quiz results using the short slug.
+        Increments view counter for analytics.
+      tags:
+        - Results
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9]{6,12}$'
+          example: "abc123xyz"
+      responses:
+        '200':
+          description: Results retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuizResult'
+        '404':
+          description: Results not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Admin endpoints (P2)
+
+  /admin/characters:
+    get:
+      summary: List all character types (P2)
+      description: Administrative endpoint to view all character types
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: Character types retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  characters:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CharacterType'
+
+components:
+  schemas:
+    QuizResult:
+      type: object
+      required:
+        - sessionId
+        - character
+        - finalTraits
+        - description
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        character:
+          $ref: '#/components/schemas/CharacterType'
+        finalTraits:
+          type: object
+          description: Final calculated trait scores (0-100)
+          required:
+            - F
+            - I
+            - S
+            - G
+            - E
+            - N
+            - A
+            - D
+          properties:
+            F:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Focused
+            I:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Independence
+            S:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Sensing
+            G:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Grounded
+            E:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Exploratory
+            N:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Network
+            A:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Analytical
+            D:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Driven
+        description:
+          type: string
+          description: Full personality description for the assigned character
+        workStyleStrengths:
+          type: array
+          items:
+            type: string
+          description: List of workplace strengths
+          example:
+            - "Strategic thinking"
+            - "Mentorship"
+            - "Long-term planning"
+        interpersonalDynamics:
+          type: string
+          description: How this personality interacts with others
+        matchConfidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Confidence score for character match (0-100)
+        completedAt:
+          type: string
+          format: date-time
+
+    CharacterType:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+        - shortDescription
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "The Wise Dragon"
+        slug:
+          type: string
+          example: "wise-dragon"
+        shortDescription:
+          type: string
+          example: "A strategic thinker who values wisdom and long-term planning"
+        traitProfile:
+          type: object
+          description: Target trait scores for this character
+          properties:
+            F:
+              type: integer
+            I:
+              type: integer
+            S:
+              type: integer
+            G:
+              type: integer
+            E:
+              type: integer
+            N:
+              type: integer
+            A:
+              type: integer
+            D:
+              type: integer
+        visualAssets:
+          type: object
+          properties:
+            iconUrl:
+              type: string
+              format: uri
+            illustrationUrl:
+              type: string
+              format: uri
+            colorPalette:
+              type: array
+              items:
+                type: string
+                pattern: '^#[0-9A-Fa-f]{6}$'
+              example: ["#8B4513", "#FFD700", "#4169E1"]
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          example: "Response text must be between 1 and 500 characters"
+        code:
+          type: string
+          example: "INVALID_RESPONSE_LENGTH"
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error context
+
+  securitySchemes:
+    # P2: Add authentication for saved results
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authenticated requests (P2)
+
+# Rate Limiting Headers (all endpoints)
+x-rate-limit-headers:
+  X-RateLimit-Limit:
+    description: Maximum requests per time window
+    schema:
+      type: integer
+  X-RateLimit-Remaining:
+    description: Remaining requests in current window
+    schema:
+      type: integer
+  X-RateLimit-Reset:
+    description: Unix timestamp when limit resets
+    schema:
+      type: integer
+

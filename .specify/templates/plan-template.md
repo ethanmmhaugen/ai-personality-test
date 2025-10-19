@@ -31,7 +31,19 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Verify compliance with constitution principles (`.specify/memory/constitution.md`):
+
+- [ ] **I. Test-First Development**: Test strategy defined (contract & integration tests planned)
+- [ ] **II. User-Centric Design**: User stories prioritized, independently testable, with acceptance criteria
+- [ ] **III. Modular Architecture**: Clear module boundaries, minimal dependencies, explicit interfaces
+- [ ] **IV. Documentation Standards**: Spec, plan, and contract docs planned/complete
+- [ ] **V. Simplicity**: Simplest viable approach chosen, any complexity justified below
+
+### Complexity Justification (if needed)
+
+*Complete this section ONLY if introducing complexity that requires justification*
+
+See Complexity Tracking section below for required justification format.
 
 ## Project Structure
 
